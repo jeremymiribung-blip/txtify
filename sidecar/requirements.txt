@@ -1,4 +1,7 @@
-glm-ocr
 torch --index-url https://download.pytorch.org/whl/cpu
 transformers
+huggingface_hub
+# GLM-OCR is not yet on PyPI - install from GitHub (optional, fallback to transformers works without it):
+# pip install git+https://github.com/zai-org/GLM-OCR.git
+# glm-ocr
 # optional for speed: vllm or sglang or ollama

@@ -195,8 +195,61 @@ impl App {
             p.is_dir() || (p.exists() && p.is_dir()) || Self::is_dir_like(p, &inputs)
         });
 
-        for input_path in inputs {
-            let out_clone = output.clone();
+        // Deduplicate targets for same-stem inputs (e.g. sample.docx + sample.xlsx -> sample.md collision)
+        let mut claimed: std::collections::HashSet<PathBuf> = std::collections::HashSet::new();
+        let mut planned: Vec<(PathBuf, Option<PathBuf>)> = Vec::with_capacity(inputs.len());
+        for inp in &inputs {
+            let raw_target = Self::resolve_target_path(inp, output.as_deref(), to, output_is_dir);
+            let unique_target = if let Some(t) = raw_target {
+                if t.as_os_str() == "-" {
+                    Some(t)
+                } else {
+                    let mut candidate = t.clone();
+                    let mut counter = 1;
+                    // Also check filesystem exists without --overwrite/--skip to avoid silent overwrite
+                    while claimed.contains(&candidate) {
+                        let stem = inp
+                            .file_stem()
+                            .map(|s| s.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "output".to_string());
+                        let dir = candidate.parent().unwrap_or_else(|| Path::new(""));
+                        candidate = dir.join(format!("{stem}_{}.{}", counter, to.extension()));
+                        counter += 1;
+                    }
+                    claimed.insert(candidate.clone());
+                    Some(candidate)
+                }
+            } else {
+                // alongside: input.with_extension - also dedup
+                let raw = inp.with_extension(to.extension());
+                let mut cand = raw.clone();
+                let mut c = 1;
+                while claimed.contains(&cand) {
+                    let stem = inp
+                        .file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_else(|| "output".to_string());
+                    let parent = inp.parent().unwrap_or_else(|| Path::new(""));
+                    cand = parent.join(format!("{stem}_{}.{}", c, to.extension()));
+                    c += 1;
+                }
+                claimed.insert(cand.clone());
+                Some(cand)
+            };
+            // For the case output is None we already produced a target, but run_convert's logic expects None for alongside
+            // Keep None sentinel for alongside to preserve original behavior, but use deduplicated path via claimed set
+            // So if original output was None, keep None yet reserve claimed path
+            let effective = if output.is_none() && !output_is_dir {
+                // Convert deduped path back to None? Actually we need to pass the deduped alongside path as target
+                // Use the deduped candidate directly
+                unique_target
+            } else {
+                unique_target
+            };
+            planned.push((inp.clone(), effective));
+        }
+
+        for (input_path, dedup_target) in planned {
             let sem = semaphore.clone();
             let out_format = output_format;
             let out_to_arg = to;
@@ -207,6 +260,7 @@ impl App {
             let ow = overwrite;
             let skip = skip_existing;
             let conv_mode = conversion_mode;
+            let target_for_task = dedup_target.clone();
 
             join_set.spawn(async move {
                 let _permit = sem.acquire_owned().await.map_err(|e| {
@@ -215,13 +269,8 @@ impl App {
                 let detector = DefaultDetector;
                 let registry = Self::build_registry(&cfg, backend_clone);
 
-                // Resolve target path
-                let target = Self::resolve_target_path(
-                    &input_path,
-                    out_clone.as_deref(),
-                    out_to_arg,
-                    output_is_dir,
-                );
+                // Use pre-deduplicated target
+                let target = target_for_task;
 
                 // Check overwrite/skip
                 if let Some(ref tgt) = target {
@@ -493,18 +542,45 @@ impl App {
         // Determine output base: if provided use it, else write alongside input with new extension
         let output_base = output.clone();
 
-        for input_path in filtered {
+        // Deduplicate batch targets (same-stem collision, e.g. sample.docx + sample.xlsx -> sample.md)
+        let mut claimed_batch: std::collections::HashSet<PathBuf> =
+            std::collections::HashSet::new();
+        let mut filtered_dedup: Vec<(PathBuf, PathBuf)> = Vec::with_capacity(filtered.len());
+        for p in filtered {
+            let raw = if let Some(ref base) = output_base {
+                let rel = p.strip_prefix(&folder).unwrap_or(p.as_path());
+                let mut tgt = base.join(rel);
+                tgt.set_extension(to.extension());
+                tgt
+            } else {
+                let mut tgt = p.clone();
+                tgt.set_extension(to.extension());
+                tgt
+            };
+            let mut cand = raw.clone();
+            let mut counter = 1;
+            while claimed_batch.contains(&cand) {
+                let parent = cand.parent().unwrap_or_else(|| Path::new(""));
+                let stem = p
+                    .file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "output".to_string());
+                cand = parent.join(format!("{stem}_{}.{}", counter, to.extension()));
+                counter += 1;
+            }
+            claimed_batch.insert(cand.clone());
+            filtered_dedup.push((p, cand));
+        }
+
+        for (input_path, dedup_target) in filtered_dedup {
             let pb_clone = pb.clone();
             let sem = semaphore.clone();
             let cfg = self.config.clone();
             let backend_c = backend;
-            let out_base = output_base.clone();
             let ow = overwrite;
             let skip = skip_existing;
             let out_format = output_format;
-            let out_to = to;
             let conv_mode = conversion_mode;
-            let folder_clone = folder.clone();
 
             join_set.spawn(async move {
                 let _permit = sem
@@ -515,36 +591,21 @@ impl App {
                 let detector = DefaultDetector;
                 let registry = Self::build_registry(&cfg, backend_c);
 
-                // Resolve target: if output_base is Some(dir) use that dir preserving relative path
-                // else alongside source with new extension
-                let target = if let Some(ref base) = out_base {
-                    // Preserve relative path from folder
-                    let rel = input_path
-                        .strip_prefix(&folder_clone)
-                        .unwrap_or(input_path.as_path());
-                    let mut tgt = base.join(rel);
-                    tgt.set_extension(out_to.extension());
-                    Some(tgt)
-                } else {
-                    let mut tgt = input_path.clone();
-                    tgt.set_extension(out_to.extension());
-                    Some(tgt)
-                };
+                // Use pre-deduplicated target (always Some)
+                let target: PathBuf = dedup_target;
 
-                if let Some(ref tgt) = target {
-                    if tgt.exists() {
-                        if skip {
-                            pb_clone.set_message(format!("skip {}", input_path.display()));
-                            pb_clone.inc(1);
-                            return Ok::<Option<PathBuf>, TxtifyError>(None);
-                        }
-                        if !ow {
-                            pb_clone.inc(1);
-                            return Err(TxtifyError::ConversionFailed(format!(
-                                "output exists: {} (use --overwrite)",
-                                tgt.display()
-                            )));
-                        }
+                if target.exists() {
+                    if skip {
+                        pb_clone.set_message(format!("skip {}", input_path.display()));
+                        pb_clone.inc(1);
+                        return Ok::<Option<PathBuf>, TxtifyError>(None);
+                    }
+                    if !ow {
+                        pb_clone.inc(1);
+                        return Err(TxtifyError::ConversionFailed(format!(
+                            "output exists: {} (use --overwrite)",
+                            target.display()
+                        )));
                     }
                 }
 
@@ -553,7 +614,7 @@ impl App {
                     Ok(fmt) => {
                         let req = ConversionRequest {
                             input_path: input_path.clone(),
-                            output_path: target.clone(),
+                            output_path: Some(target.clone()),
                             input_format: fmt,
                             output_format: out_format,
                             mode: conv_mode,
@@ -570,18 +631,15 @@ impl App {
                     Ok(result) => {
                         let rendered =
                             Self::render_output(&result.markdown, &result.metadata, out_format)?;
-                        if let Some(ref tgt) = target {
-                            if let Some(parent) = tgt.parent() {
-                                if !parent.as_os_str().is_empty() && !parent.exists() {
-                                    std::fs::create_dir_all(parent).map_err(TxtifyError::Io)?;
-                                }
+                        if let Some(parent) = target.parent() {
+                            if !parent.as_os_str().is_empty() && !parent.exists() {
+                                std::fs::create_dir_all(parent).map_err(TxtifyError::Io)?;
                             }
-                            std::fs::write(tgt, rendered.as_bytes()).map_err(TxtifyError::Io)?;
                         }
+                        std::fs::write(&target, rendered.as_bytes()).map_err(TxtifyError::Io)?;
                         pb_clone.set_message(format!("done {}", input_path.display()));
                         pb_clone.inc(1);
-                        let final_path = target.unwrap_or(input_path);
-                        Ok(Some(final_path))
+                        Ok(Some(target))
                     }
                     Err(e) => {
                         pb_clone.set_message(format!("err {}", input_path.display()));

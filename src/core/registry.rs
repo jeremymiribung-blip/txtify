@@ -27,8 +27,20 @@ impl ConverterRegistry {
 
     /// Select the best converter for the given request.
     ///
-    /// Priority: Fast → Pandoc → GLM-OCR (HighQuality only).
+    /// Priority: Fast (Fast mode) → GLM-OCR (HighQuality for Pdf/Image) → Pandoc → Fallback.
     pub fn select(&self, req: &ConversionRequest) -> Result<&dyn Converter, TxtifyError> {
+        // HighQuality: prefer GLM-OCR for PDF and images (best layout/OCR)
+        if req.mode == ConversionMode::HighQuality {
+            let sidecar = self.converters.iter().find(|c| {
+                (c.name() == "glm-ocr" || c.name() == "sidecar")
+                    && c.supported_formats().contains(&req.input_format)
+                    && c.supports_mode(req.mode)
+            });
+            if let Some(c) = sidecar {
+                return Ok(c.as_ref());
+            }
+        }
+
         let fast = self
             .converters
             .iter()
@@ -51,6 +63,7 @@ impl ConverterRegistry {
             }
         }
 
+        // Fallback: if HighQuality but GLM was not matched earlier due to name mismatch, try again
         if req.mode == ConversionMode::HighQuality {
             let sidecar = self.converters.iter().find(|c| {
                 (c.name() == "glm-ocr" || c.name() == "sidecar")
@@ -214,11 +227,11 @@ mod tests {
     }
 
     #[test]
-    fn select_high_quality_pdf_prefers_pandoc_over_glm_ocr() {
+    fn select_high_quality_pdf_prefers_glm_over_pandoc() {
         let reg = build_registry();
         let req = make_request(InputFormat::Pdf, ConversionMode::HighQuality);
         let c = reg.select(&req).unwrap();
-        assert_eq!(c.name(), "pandoc");
+        assert_eq!(c.name(), "glm-ocr");
     }
 
     #[test]
