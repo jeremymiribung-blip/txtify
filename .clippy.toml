@@ -1,0 +1,7 @@
+# Clippy configuration
+# Deny unwrap, expect and panic in library code
+# Enforced via Cargo.toml [lints.clippy] - this file documents the intent
+# and ensures `cargo clippy -- -D warnings` is green.
+
+# Thresholds (examples, keep defaults)
+# unwrap-used = "deny" is configured in Cargo.toml
