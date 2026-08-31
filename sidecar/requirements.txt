@@ -1,0 +1,4 @@
+glm-ocr
+torch --index-url https://download.pytorch.org/whl/cpu
+transformers
+# optional for speed: vllm or sglang or ollama
