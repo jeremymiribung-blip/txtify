@@ -1,0 +1,134 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version tag (e.g. v0.1.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: build-${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-musl
+          - os: ubuntu-latest
+            target: aarch64-unknown-linux-musl
+          - os: macos-latest
+            target: x86_64-apple-darwin
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+      - name: Install musl tools (Linux)
+        if: contains(matrix.target, 'linux-musl')
+        run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - name: Build release
+        run: cargo build --release --target ${{ matrix.target }} --verbose
+      - name: Package (Unix)
+        if: matrix.os != 'windows-latest'
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/txtify"
+          ls -lh "$BIN"
+          SIZE=$(stat -c%s "$BIN" 2>/dev/null || stat -f%z "$BIN" 2>/dev/null || wc -c < "$BIN")
+          echo "Binary size: $SIZE"
+          MAX=$((15*1024*1024))
+          if [ "$SIZE" -gt "$MAX" ]; then echo "ERROR: exceeds 15MB"; exit 1; fi
+          STAGE="dist/txtify-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/txtify"
+          cp README.md LICENSE* "$STAGE/" 2>/dev/null || true
+          cp -r sidecar "$STAGE/sidecar" 2>/dev/null || true
+          cp installer/install.sh "$STAGE/" 2>/dev/null || true
+          tar -czf "txtify-${{ matrix.target }}.tar.gz" -C dist "txtify-${{ matrix.target }}"
+          shasum -a 256 "txtify-${{ matrix.target }}.tar.gz" > "txtify-${{ matrix.target }}.tar.gz.sha256"
+          cat "txtify-${{ matrix.target }}.tar.gz.sha256"
+          ls -lh "txtify-${{ matrix.target }}.tar.gz"*
+      - name: Package (Windows)
+        if: matrix.os == 'windows-latest'
+        shell: bash
+        run: |
+          BIN="target/${{ matrix.target }}/release/txtify.exe"
+          ls -lh "$BIN"
+          SIZE=$(stat -c%s "$BIN" 2>/dev/null || wc -c < "$BIN")
+          echo "Binary size: $SIZE"
+          MAX=$((15*1024*1024))
+          if [ "$SIZE" -gt "$MAX" ]; then echo "ERROR: exceeds 15MB"; exit 1; fi
+          STAGE="dist/txtify-${{ matrix.target }}"
+          mkdir -p "$STAGE"
+          cp "$BIN" "$STAGE/txtify.exe"
+          cp README.md LICENSE* "$STAGE/" 2>/dev/null || true
+          cp -r sidecar "$STAGE/sidecar" 2>/dev/null || true
+          cp installer/install.ps1 "$STAGE/" 2>/dev/null || true
+          # Create zip
+          (cd dist && zip -r "../txtify-${{ matrix.target }}.zip" "txtify-${{ matrix.target }}")
+          # Inno Setup installer if iscc available
+          if command -v iscc >/dev/null 2>&1; then
+            iscc installer/windows/install.iss || echo "iscc failed, skipping exe installer"
+            ls -lh target/installer/*.exe 2>/dev/null || true
+            cp target/installer/*.exe . 2>/dev/null || true
+            if ls *.exe >/dev/null 2>&1; then
+              sha256sum *.exe > txtify-windows-setup.sha256 2>/dev/null || shasum -a 256 *.exe > txtify-windows-setup.sha256
+            fi
+          fi
+          shasum -a 256 "txtify-${{ matrix.target }}.zip" > "txtify-${{ matrix.target }}.zip.sha256"
+          cat "txtify-${{ matrix.target }}.zip.sha256"
+          ls -lh txtify-*.*
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: txtify-${{ matrix.target }}
+          path: |
+            txtify-*.tar.gz
+            txtify-*.tar.gz.sha256
+            txtify-*.zip
+            txtify-*.zip.sha256
+            *.exe
+            *.sha256
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: List artifacts
+        run: ls -lhR dist
+      - name: Generate SHA256SUMS
+        run: |
+          cd dist
+          cat *.sha256 > SHA256SUMS 2>/dev/null || shasum -a 256 txtify-* > SHA256SUMS
+          cat SHA256SUMS
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/txtify-*.tar.gz
+            dist/txtify-*.zip
+            dist/*.exe
+            dist/SHA256SUMS
+          generate_release_notes: true
+          fail_on_unmatched_files: false

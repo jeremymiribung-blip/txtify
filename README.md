@@ -7,6 +7,41 @@ Fast 42ms vs GLM 1.86 pg/s.
 
 ## Install
 
+### Quick install (Linux/macOS) — curl
+
+```bash
+# Inspect first, then pipe to sh (recommended)
+curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh -o install.sh
+less install.sh
+sh install.sh
+
+# One-liner (after inspection)
+curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh | sh
+
+# Specific version or prefix
+curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh | sh -s -- --version v0.1.0 --prefix ~/.local/bin
+TXTIFY_VERSION=v0.1.0 sh installer/install.sh
+```
+
+The script detects `x86_64/aarch64` + `linux/musl` or `apple-darwin`, downloads `txtify-<target>.tar.gz` from `releases/latest/download`, verifies `sha256` if present, installs to `~/.local/bin` (or `/usr/local/bin` fallback), and adds to `PATH` via `~/.bashrc`/`~/.zshrc`. See `sh installer/install.sh --help`.
+
+### Quick install (Windows) — PowerShell
+
+```powershell
+# Inspect first
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 -OutFile install.ps1
+Get-Content install.ps1 | More
+.\install.ps1
+
+# One-liner (after inspection)
+irm https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 | iex
+
+# Options
+.\install.ps1 -Version v0.1.0 -Prefix "$env:LOCALAPPDATA\txtify" -Force
+```
+
+Installs `txtify.exe` to `%LOCALAPPDATA%\txtify` (or custom `-Prefix`), verifies `sha256`, adds to HKCU `PATH` (no admin), then run `txtify doctor` and `txtify shell install` for context menu.
+
 ### From crates.io (once published)
 
 ```bash
@@ -14,7 +49,7 @@ cargo install txtify --all-features
 txtify --help
 ```
 
-### From source (recommended for now)
+### From source
 
 ```bash
 git clone https://github.com/example/txtify
@@ -26,7 +61,7 @@ cargo build --release
 cargo install --path . --all-features
 ```
 
-### Windows installer
+### Windows installer (alternative)
 
 Download `txtify-0.1.0-windows-x86_64-setup.exe` from Releases. Built via Inno Setup from `installer/windows/install.iss`:
 
