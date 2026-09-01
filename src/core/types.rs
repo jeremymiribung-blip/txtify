@@ -142,6 +142,18 @@ pub enum GlmEngine {
     Ollama,
 }
 
+impl std::fmt::Display for GlmEngine {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            Self::Transformers => "transformers",
+            Self::Vllm => "vllm",
+            Self::Sglang => "sglang",
+            Self::Ollama => "ollama",
+        };
+        f.write_str(s)
+    }
+}
+
 impl GlmEngine {
     /// Auto-detect the best available engine.
     ///
