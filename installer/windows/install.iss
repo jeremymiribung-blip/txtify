@@ -3,7 +3,7 @@
 ; Builds installer that ships pure-Rust binary (<15MB) + optional sidecar/
 
 #define MyAppName "Txtify"
-#define MyAppVersion "0.1.2"
+#define MyAppVersion "0.1.3"
 #define MyAppPublisher "Txtify Contributors"
 #define MyAppURL "https://github.com/jeremymiribung-blip/txtify"
 #define MyAppExeName "txtify.exe"
