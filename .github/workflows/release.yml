@@ -24,8 +24,9 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-musl
-          - os: ubuntu-latest
-            target: aarch64-unknown-linux-musl
+          # aarch64-linux-musl braucht Cross-Compiler (aarch64-linux-musl-gcc),
+          # musl-tools liefert nur x86_64 — deaktiviert bis zigbuild/cross eingerichtet ist.
+          # ARM-Linux-Nutzer bauen via `sh installer/install.sh --from-source`.
           - os: macos-latest
             target: x86_64-apple-darwin
           - os: macos-latest
@@ -80,8 +81,12 @@ jobs:
           cp README.md LICENSE* "$STAGE/" 2>/dev/null || true
           cp -r sidecar "$STAGE/sidecar" 2>/dev/null || true
           cp installer/install.ps1 "$STAGE/" 2>/dev/null || true
-          # Create zip
-          (cd dist && zip -r "../txtify-${{ matrix.target }}.zip" "txtify-${{ matrix.target }}")
+          # Create zip (zip fehlt auf windows-latest Git-Bash -> Compress-Archive Fallback)
+          if command -v zip >/dev/null 2>&1; then
+            (cd dist && zip -r "../txtify-${{ matrix.target }}.zip" "txtify-${{ matrix.target }}")
+          else
+            powershell -NoProfile -Command "Compress-Archive -Path 'dist/txtify-${{ matrix.target }}' -DestinationPath 'txtify-${{ matrix.target }}.zip' -Force"
+          fi
           # Inno Setup installer if iscc available
           if command -v iscc >/dev/null 2>&1; then
             iscc installer/windows/install.iss || echo "iscc failed, skipping exe installer"
