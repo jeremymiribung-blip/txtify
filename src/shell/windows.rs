@@ -522,47 +522,90 @@ mod tests {
         wi.install().expect("install");
         assert!(wi.is_installed(), "should be installed after install");
 
-        // Verify mock files
-        let root = PathBuf::from(&mock_root);
-        let verbs =
-            std::fs::read_to_string(root.join("*").join("shell").join("Txtify").join("MUIVerb"))
-                .expect("MUIVerb");
-        assert_eq!(verbs, "Txtify");
-        let sc = std::fs::read_to_string(
-            root.join("*")
-                .join("shell")
-                .join("Txtify")
-                .join("SubCommands"),
-        )
-        .expect("SubCommands");
-        assert_eq!(sc, "Txtify.FastMd;Txtify.HighQuality;Txtify.Txt");
+        // On Windows the integration writes to the real registry
+        // (HKCU\<mock_root>), where `*` is a legal key name — verify via
+        // winreg. Elsewhere a mock filesystem tree is used, where `*` would
+        // be an illegal filename on Windows, so verify via files there.
+        #[cfg(target_os = "windows")]
+        {
+            use winreg::enums::HKEY_CURRENT_USER;
+            use winreg::RegKey;
+            let hkcu = RegKey::predef(HKEY_CURRENT_USER);
+            let parent = hkcu
+                .open_subkey(format!(r"{mock_root}\*\shell\Txtify"))
+                .expect("Txtify parent");
+            let verbs: String = parent.get_value("MUIVerb").expect("MUIVerb");
+            assert_eq!(verbs, "Txtify");
+            let subcmds: String = parent.get_value("SubCommands").expect("SubCommands");
+            assert_eq!(subcmds, "Txtify.FastMd;Txtify.HighQuality;Txtify.Txt");
 
-        let fast_cmd = std::fs::read_to_string(
-            root.join("*")
-                .join("shell")
-                .join("Txtify.FastMd")
-                .join("command")
-                .join("default"),
-        )
-        .expect("fast cmd");
-        assert_eq!(
-            fast_cmd,
-            r#""C:\path\txtify.exe" convert "%1" --to md --mode fast"#
-        );
+            let fast = hkcu
+                .open_subkey(format!(r"{mock_root}\*\shell\Txtify.FastMd\command"))
+                .expect("fast cmd key");
+            let fast_cmd: String = fast.get_value("").expect("fast cmd");
+            assert_eq!(
+                fast_cmd,
+                r#""C:\path\txtify.exe" convert "%1" --to md --mode fast"#
+            );
 
-        // Directory batch
-        let dir_fast = std::fs::read_to_string(
-            root.join("Directory")
-                .join("shell")
-                .join("Txtify.FastMd")
-                .join("command")
-                .join("default"),
-        )
-        .expect("dir fast");
-        assert_eq!(
-            dir_fast,
-            r#""C:\path\txtify.exe" batch "%1" --to md --mode fast"#
-        );
+            // Directory batch
+            let dir_fast = hkcu
+                .open_subkey(format!(
+                    r"{mock_root}\Directory\shell\Txtify.FastMd\command"
+                ))
+                .expect("dir fast key");
+            let dir_cmd: String = dir_fast.get_value("").expect("dir fast");
+            assert_eq!(
+                dir_cmd,
+                r#""C:\path\txtify.exe" batch "%1" --to md --mode fast"#
+            );
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            // Verify mock files
+            let root = PathBuf::from(&mock_root);
+            let verbs = std::fs::read_to_string(
+                root.join("*").join("shell").join("Txtify").join("MUIVerb"),
+            )
+            .expect("MUIVerb");
+            assert_eq!(verbs, "Txtify");
+            let sc = std::fs::read_to_string(
+                root.join("*")
+                    .join("shell")
+                    .join("Txtify")
+                    .join("SubCommands"),
+            )
+            .expect("SubCommands");
+            assert_eq!(sc, "Txtify.FastMd;Txtify.HighQuality;Txtify.Txt");
+
+            let fast_cmd = std::fs::read_to_string(
+                root.join("*")
+                    .join("shell")
+                    .join("Txtify.FastMd")
+                    .join("command")
+                    .join("default"),
+            )
+            .expect("fast cmd");
+            assert_eq!(
+                fast_cmd,
+                r#""C:\path\txtify.exe" convert "%1" --to md --mode fast"#
+            );
+
+            // Directory batch
+            let dir_fast = std::fs::read_to_string(
+                root.join("Directory")
+                    .join("shell")
+                    .join("Txtify.FastMd")
+                    .join("command")
+                    .join("default"),
+            )
+            .expect("dir fast");
+            assert_eq!(
+                dir_fast,
+                r#""C:\path\txtify.exe" batch "%1" --to md --mode fast"#
+            );
+        }
 
         wi.uninstall().expect("uninstall");
         assert!(

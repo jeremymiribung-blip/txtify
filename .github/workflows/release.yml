@@ -96,7 +96,8 @@ jobs:
               sha256sum *.exe > txtify-windows-setup.sha256 2>/dev/null || shasum -a 256 *.exe > txtify-windows-setup.sha256
             fi
           fi
-          shasum -a 256 "txtify-${{ matrix.target }}.zip" > "txtify-${{ matrix.target }}.zip.sha256"
+          # shasum fehlt auf windows-latest Git-Bash -> sha256sum-Fallback (set -e bricht sonst ab)
+          (sha256sum "txtify-${{ matrix.target }}.zip" > "txtify-${{ matrix.target }}.zip.sha256" 2>/dev/null || shasum -a 256 "txtify-${{ matrix.target }}.zip" > "txtify-${{ matrix.target }}.zip.sha256")
           cat "txtify-${{ matrix.target }}.zip.sha256"
           ls -lh txtify-*.*
       - name: Upload artifact
