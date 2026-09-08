@@ -179,12 +179,14 @@ EXE="{exe}"
 
 # Nautilus provides selected files via $NAUTILUS_SCRIPT_SELECTED_FILE_PATHS (newline separated)
 # Fallback to arguments and $NAUTILUS_SCRIPT_SELECTED_URIS
+# Output is written next to the input file (single files print to stdout
+# by default, which would be lost without a terminal).
 handle_file() {{
     local file="$1"
     if [ -d "$file" ]; then
-        "$EXE" batch "$file" --to {to} --mode {mode_flag}
+        "$EXE" batch "$file" --to {to} --mode {mode_flag} --overwrite
     else
-        "$EXE" convert "$file" --to {to} --mode {mode_flag}
+        "$EXE" convert "$file" -o "${{file%.*}}.{to}" --to {to} --mode {mode_flag} --overwrite
     fi
 }}
 
@@ -207,6 +209,10 @@ elif [ $# -gt 0 ]; then
 else
     # If no selection, try current directory
     handle_file "$(pwd)"
+fi
+
+if command -v notify-send >/dev/null 2>&1; then
+    notify-send "Txtify ({label})" "Fertig – die Ausgabe liegt neben der Datei." || true
 fi
 "#
         )
