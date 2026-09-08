@@ -36,6 +36,12 @@ impl GlmOcrConverter {
         Self::from_config(&SidecarConfig::default())
     }
 
+    /// Override request timeout (e.g. from `timeout_secs` config).
+    pub fn with_timeout(mut self, timeout: std::time::Duration) -> Self {
+        self.client = self.client.with_timeout(timeout);
+        self
+    }
+
     /// client — fn for txtify.
     pub fn client(&self) -> &SidecarClient {
         &self.client

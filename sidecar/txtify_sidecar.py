@@ -145,26 +145,36 @@ def _init_pipeline(backend: str) -> Any:
             log.warning("Failed to init GlmOcr pipeline: %s\n%s", e, traceback.format_exc())
             # fall through to transformers fallback
 
-    # 2) Fallback: transformers pipeline for zai-org/GLM-OCR
-    # GLM-OCR is described as CogViT 0.4B + GLM 0.5B, MTP enabled
-    log.info("Falling back to transformers AutoModel for %s", model_id)
+    # 2) Local transformers inference (no API key needed).
+    # Native image-text class if available, else generic AutoModel.
+    # CPU (no CUDA here): float32; CUDA: bf16.
+    log.info("Loading local transformers pipeline for %s", model_id)
     try:
         import torch
-        from transformers import AutoModel, AutoProcessor, AutoTokenizer
+        from transformers import (
+            AutoModelForImageTextToText,
+            AutoProcessor,
+            AutoTokenizer,
+        )
 
-        # Determine dtype
-        torch_dtype = torch.bfloat16 if _dtype == "bf16" else torch.float16
-        # Try to load with trust_remote_code (required for GLM/CogVLM custom code)
-        # Some versions use AutoModelForImageTextToText or similar
+        try:
+            from transformers import AutoModel as _AutoModel
+        except Exception:
+            _AutoModel = None
+        loaders = [AutoModelForImageTextToText]
+        if _AutoModel is not None:
+            loaders.append(_AutoModel)
+
+        use_cuda = torch.cuda.is_available()
+        torch_dtype = torch.bfloat16 if use_cuda else torch.float32
         model = None
         last_err = None
-        for loader in [AutoModel]:
+        for ld in loaders:
             try:
-                model = loader.from_pretrained(
+                model = ld.from_pretrained(
                     model_id,
-                    torch_dtype=torch_dtype,
+                    dtype=torch_dtype,
                     trust_remote_code=True,
-                    # MTP enabled via model kwargs if supported
                 )
                 break
             except Exception as e:
@@ -174,49 +184,92 @@ def _init_pipeline(backend: str) -> Any:
         if model is None:
             raise RuntimeError(f"Failed to load model {model_id}: {last_err} ; imports tried: {import_errors}")
 
-        # Try processor/tokenizer
+        if use_cuda:
+            model = model.to("cuda")
+        model.eval()
         try:
             processor = AutoProcessor.from_pretrained(model_id, trust_remote_code=True)
-        except Exception:
-            processor = None
-        try:
-            tokenizer = AutoTokenizer.from_pretrained(model_id, trust_remote_code=True)
-        except Exception:
-            tokenizer = None
+        except Exception as e:
+            raise RuntimeError(f"Failed to load processor for {model_id}: {e}") from e
 
-        # Wrap in a simple pipeline object that implements .convert or __call__
+        # Wrap in a simple pipeline object that implements .convert or __call__.
+        # Images are OCR'd directly; PDFs are rendered page by page via
+        # pymupdf and OCR'd per page. Office/HTML formats are not supported
+        # by the local path (use --mode fast for those).
         class TransformersGlmPipeline:
-            def __init__(self, model, processor, tokenizer):
+            def __init__(self, model, processor):
                 self.model = model
                 self.processor = processor
-                self.tokenizer = tokenizer
                 self.model_id = model_id
-                # BF16 already set
+                try:
+                    self.device = next(model.parameters()).device
+                except Exception:
+                    self.device = torch.device("cpu")
+
+            def _ocr_image(self, image) -> str:
+                import torch as _torch
+
+                messages = [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "image"},
+                            {"type": "text", "text": "Text Recognition:"},
+                        ],
+                    }
+                ]
+                prompt = self.processor.apply_chat_template(
+                    messages, tokenize=False, add_generation_prompt=True
+                )
+                inputs = self.processor(
+                    images=image, text=prompt, return_tensors="pt"
+                ).to(self.device)
+                inputs.pop("token_type_ids", None)
+                with _torch.no_grad():
+                    generated = self.model.generate(**inputs, max_new_tokens=4096)
+                start = inputs["input_ids"].shape[1]
+                return self.processor.decode(
+                    generated[0][start:], skip_special_tokens=True
+                ).strip()
 
             def convert(self, path: str, **kw):
-                # For transformers fallback we still need to honour input types.
-                # If model has custom chat/ocr method via trust_remote_code, try it.
-                # Otherwise, we will attempt via model.chat or model.generate.
-                # This is a best-effort fallback; primary path is GlmOcr.
-                if hasattr(self.model, "chat") or hasattr(self.model, "ocr"):
-                    # Try to use model-specific OCR method
-                    for meth_name in ["ocr", "chat", "generate_ocr"]:
-                        meth = getattr(self.model, meth_name, None)
-                        if meth:
-                            try:
-                                return meth(path)
-                            except Exception:
-                                continue
-                # Generic generate fallback
+                from PIL import Image as _Image
+
+                ext = Path(path).suffix.lower()
+                if ext in (".png", ".jpg", ".jpeg", ".tiff", ".tif", ".bmp", ".webp"):
+                    image = _Image.open(path).convert("RGB")
+                    return self._ocr_image(image)
+                if ext == ".pdf":
+                    try:
+                        import pymupdf as fitz
+                    except ImportError as e:
+                        raise RuntimeError(
+                            "PDF high-quality OCR needs pymupdf: pip install pymupdf"
+                        ) from e
+                    doc = fitz.open(path)
+                    try:
+                        parts = []
+                        for i, page in enumerate(doc, start=1):
+                            pix = page.get_pixmap(dpi=150)
+                            import io as _io
+
+                            image = _Image.open(
+                                _io.BytesIO(pix.tobytes("png"))
+                            ).convert("RGB")
+                            text = self._ocr_image(image)
+                            parts.append(f"--- Page {i} ---\n\n{text}")
+                        return "\n\n".join(parts)
+                    finally:
+                        doc.close()
                 raise RuntimeError(
-                    "Transformers fallback pipeline requires glm-ocr package for full layout+region pipeline. "
-                    "Install glm-ocr: pip install -r sidecar/requirements.txt"
+                    f"local high-quality inference supports pdf/images, got {ext or path}. "
+                    "Tip: use --mode fast for office/html documents"
                 )
 
             def __call__(self, *a, **kw):
                 return self.convert(*a, **kw)
 
-        _pipeline = TransformersGlmPipeline(model, processor, tokenizer)
+        _pipeline = TransformersGlmPipeline(model, processor)
         _backend = backend
         return _pipeline
     except ImportError as e:
@@ -345,7 +398,7 @@ def _convert_via_pipeline(pipeline: Any, path: str, output_format: str = "md") -
             if ext == ".pdf":
                 # Try pypdf or pdfminer fallback to count pages without heavy deps
                 try:
-                    import fitz  # pymupdf if available
+                    import pymupdf as fitz  # pymupdf if available
                     doc = fitz.open(path)
                     pages = len(doc)
                     doc.close()

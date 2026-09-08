@@ -8,6 +8,9 @@ use tokio::process::Command;
 use crate::config::SidecarConfig;
 use crate::core::error::TxtifyError;
 
+/// Sequence for unique sidecar stderr log names (batch converts share the PID).
+static SIDECAR_LOG_SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 /// Request sent to sidecar via JSON stdin.
 #[derive(Debug, Serialize)]
 struct SidecarRequest {
@@ -47,7 +50,7 @@ pub struct HealthResponse {
 ///
 /// Spawns `python sidecar/txtify_sidecar.py` via `tokio::process::Command`,
 /// detects python via `VIRTUAL_ENV` / `.venv/python3`, communicates JSON over stdin/stdout,
-/// 60s timeout, health check.
+/// 600s default timeout (local CPU inference is slow), health check.
 #[derive(Debug, Clone)]
 pub struct SidecarClient {
     python_path: String,
@@ -67,7 +70,7 @@ impl SidecarClient {
             sidecar_script,
             backend: config.glm_backend.clone(),
             model: config.glm_model.clone(),
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_secs(600),
         }
     }
 
@@ -83,7 +86,7 @@ impl SidecarClient {
             sidecar_script,
             backend,
             model,
-            timeout: Duration::from_secs(60),
+            timeout: Duration::from_secs(600),
         }
     }
 
@@ -216,11 +219,20 @@ impl SidecarClient {
             )));
         }
 
+        // Redirect stderr to a temp file: the sidecar logs model-load
+        // progress there and would deadlock once a pipe buffer fills.
+        let stderr_seq = SIDECAR_LOG_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let stderr_log = std::env::temp_dir().join(format!(
+            "txtify-sidecar-{}-{stderr_seq}.log",
+            std::process::id()
+        ));
+        let stderr_file = std::fs::File::create(&stderr_log).map_err(TxtifyError::Io)?;
+
         let mut child = Command::new(&self.python_path)
             .arg(&self.sidecar_script)
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
-            .stderr(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::from(stderr_file))
             .spawn()
             .map_err(|e| {
                 TxtifyError::SidecarNotFound(format!(
@@ -255,21 +267,45 @@ impl SidecarClient {
             .await
             .map_err(|_| TxtifyError::Timeout)??;
 
-        // Read response line with timeout
+        // Read response with timeout. Skip non-JSON preamble lines
+        // (libraries like pymupdf print warnings to stdout before the
+        // JSON response); the first line starting with '{' wins.
         let mut reader = BufReader::new(stdout);
+        let deadline = tokio::time::Instant::now() + self.timeout;
         let mut line = String::new();
-
-        let read_fut = reader.read_line(&mut line);
-        let n = tokio::time::timeout(self.timeout, read_fut)
-            .await
-            .map_err(|_| {
-                // Kill child on timeout
+        let mut saw_eof = false;
+        let trimmed = loop {
+            line.clear();
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            if remaining.is_zero() {
                 let _ = child.start_kill();
-                TxtifyError::Timeout
-            })?
-            .map_err(|e| {
-                TxtifyError::ConversionFailed(format!("failed to read sidecar stdout: {e}"))
-            })?;
+                let _ = std::fs::remove_file(&stderr_log);
+                return Err(TxtifyError::Timeout);
+            }
+            let n = tokio::time::timeout(remaining, reader.read_line(&mut line))
+                .await
+                .map_err(|_| {
+                    // Kill child on timeout
+                    let _ = child.start_kill();
+                    let _ = std::fs::remove_file(&stderr_log);
+                    TxtifyError::Timeout
+                })?
+                .map_err(|e| {
+                    TxtifyError::ConversionFailed(format!("failed to read sidecar stdout: {e}"))
+                })?;
+            if n == 0 {
+                saw_eof = true;
+                break String::new();
+            }
+            let candidate = line.trim();
+            if candidate.starts_with('{') {
+                break candidate.to_string();
+            }
+            tracing::warn!(
+                preamble = candidate,
+                "ignoring non-JSON sidecar stdout line"
+            );
+        };
 
         // Wait for child to exit (with timeout)
         let status_fut = child.wait();
@@ -277,23 +313,36 @@ impl SidecarClient {
             .await
             .map_err(|_| TxtifyError::Timeout)?
             .map_err(|e| TxtifyError::ConversionFailed(format!("sidecar wait failed: {e}")))?;
+        let stderr_tail = std::fs::read_to_string(&stderr_log)
+            .map(|s| {
+                s.lines()
+                    .rev()
+                    .take(20)
+                    .collect::<Vec<_>>()
+                    .into_iter()
+                    .rev()
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            })
+            .unwrap_or_default();
 
-        if n == 0 {
-            // No output; try to get stderr if possible (child already waited)
+        if saw_eof && trimmed.is_empty() {
+            // No output; include stderr tail for diagnosis (child already waited)
+            let _ = std::fs::remove_file(&stderr_log);
             return Err(TxtifyError::ConversionFailed(format!(
-                "sidecar produced no output (exit={}). Hint: pip install -r sidecar/requirements.txt and ensure glm-ocr installed",
-                status
+                "sidecar produced no output (exit={status}). stderr: {stderr_tail}. Hint: pip install -r sidecar/requirements.txt and ensure glm-ocr installed",
             )));
         }
 
-        let trimmed = line.trim();
         if trimmed.is_empty() {
+            let _ = std::fs::remove_file(&stderr_log);
             return Err(TxtifyError::ConversionFailed(format!(
                 "sidecar returned empty line (exit={})",
                 status
             )));
         }
 
+        let _ = std::fs::remove_file(&stderr_log);
         Ok(trimmed.to_string())
     }
 }

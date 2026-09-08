@@ -226,7 +226,7 @@ txtify splits conversion into two complementary paths. The detector picks the fo
 - Engine: `sidecar/txtify_sidecar.py` — lazy-loads `zai-org/GLM-OCR` via `GlmOcr` (or transformers fallback `AutoModel` with `trust_remote_code`), two-stage: `PP-DocLayout-V3` layout → parallel region recognition (thread pool), BF16, batch regions.
 - Backend auto-detection: `GLM_ENGINE` env > `vllm` (if installed) > `sglang` > `OLLAMA_HOST` > `transformers` (CogViT 0.4B + GLM 0.5B, MTP enabled).
 - Formats: `pdf`, `docx`, `pptx`, `xlsx`, `html`, `png`/`jpg`/`tiff` (scanned PDFs, complex layouts).
-- Interface: `src/shell/{windows,linux,macos}.rs::Shell::spawn_sidecar` → `python sidecar/txtify_sidecar.py`, protocol `{"op":"convert","path":"...","to":"md","engine":"glm_ocr","backend":"auto"}` ↔ `{"markdown":"...","pages":3,"error":null}`, 60 s timeout, health check.
+- Interface: `src/shell/{windows,linux,macos}.rs::Shell::spawn_sidecar` → `python sidecar/txtify_sidecar.py`, protocol `{"op":"convert","path":"...","to":"md","engine":"glm_ocr","backend":"auto"}` ↔ `{"markdown":"...","pages":3,"error":null}`, 600 s timeout (local CPU inference is slow), health check.
 
 **Pandoc fallback** — `src/converters/pandoc.rs` — spawns `pandoc -f <from> -t gfm --wrap=none`, returns `ConversionFailed` with install hint if missing.
 
@@ -325,7 +325,7 @@ On the **first** `--mode high-quality` conversion (or `doctor` health check that
 - **Size**: ~**1 GB** (weights) + tokenizer/processor
 - **Source**: `https://huggingface.co/zai-org/GLM-OCR` via `huggingface_hub` (used by `transformers`/`glm-ocr`)
 - **Cache**: `~/.cache/huggingface/hub/models--zai-org--GLM-OCR/` (Linux/macOS) or `%USERPROFILE%\.cache\huggingface\hub\` (Windows). Subsequent runs hit cache — no re-download.
-- **Time**: first init may take minutes depending on network (e.g., ~1 GB at 10 MB/s ≈ 100 s); health timeout is 60 s for conversion, 10 s for `doctor` — `doctor` may show `health: degraded` until model is cached.
+- **Time**: first init may take minutes depending on network (e.g., ~1 GB at 10 MB/s ≈ 100 s); convert timeout is 600 s (local CPU inference), 10 s for `doctor` — `doctor` may show `health: degraded` until model is cached.
 - **Override**: `GLM_MODEL` env or `sidecar.glm_model` config changes the ID (e.g., local path). `GLM_BACKEND` / `sidecar.glm_backend` picks `transformers`/`vllm`/`sglang`/`ollama`.
 
 If offline or download fails, the sidecar returns `{"markdown":null,"error":"... pip install -r sidecar/requirements.txt"}` and the Rust side maps it to `TxtifyError::SidecarNotFound` with hint.
@@ -353,7 +353,7 @@ src/
     fast/html.rs   # html2md + encoding_rs
     fast/text.rs   # encoding_rs (BOM/windows-1252)
     sidecar/mod.rs # GlmOcrConverter, SidecarConverter
-    sidecar/client.rs # SidecarClient (tokio::process::Command, 60s timeout, health_ok)
+    sidecar/client.rs # SidecarClient (tokio::process::Command, 600s timeout, health_ok)
     sidecar/glm.rs    # GlmOcrConverter (HighQuality only)
     pandoc.rs      # PandocConverter (fallback)
   shell/

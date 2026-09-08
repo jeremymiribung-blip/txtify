@@ -163,7 +163,7 @@ pub fn ensure_default_config(
             sp.replace('\\', "\\\\")
         ));
     }
-    toml.push_str("timeout_secs = 60\n\n[sidecar]\n");
+    toml.push_str("timeout_secs = 600\n\n[sidecar]\n");
     if let Some(py) = python_path {
         toml.push_str(&format!("python_path = \"{}\"\n", py.replace('\\', "\\\\")));
     }

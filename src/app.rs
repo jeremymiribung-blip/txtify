@@ -485,9 +485,11 @@ impl App {
         if backend_override != Backend::Auto {
             sidecar_cfg.glm_backend = backend_override.to_string();
         }
-        // Register GLM sidecar
+        // Register GLM sidecar (CPU inference is slow: honor timeout_secs, default 600s)
+        let timeout = std::time::Duration::from_secs(config.timeout_secs.unwrap_or(600));
         let sidecar_converter =
-            crate::converters::sidecar::GlmOcrConverter::from_config(&sidecar_cfg);
+            crate::converters::sidecar::GlmOcrConverter::from_config(&sidecar_cfg)
+                .with_timeout(timeout);
         registry.register(Box::new(sidecar_converter));
         // Also register legacy sidecar name for completeness
         registry.register(Box::new(SidecarConverter::default()));

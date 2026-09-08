@@ -15,10 +15,10 @@ Spawned by `src/shell` (`windows.rs` / `linux.rs` / `macos.rs`) via `tokio::proc
 {"status":"ok","engine":"glm_ocr","backend":"transformers","model":"zai-org/GLM-OCR"}
 ```
 
-- **Timeout**: 60 s per convert, 10 s health check (via `txtify doctor`)
-- **Lazy load**: model loads on first `convert`; stays resident; BF16, MTP enabled
-- **Two-stage**: PP-DocLayout-V3 layout → parallel region recognition (batched via `ThreadPoolExecutor`)
-- **Backends**: `auto` detects `vllm` > `sglang` > `ollama` (`OLLAMA_HOST`) > `transformers` (CogViT 0.4B + GLM 0.5B)
+- **Timeout**: 600 s per convert (local CPU inference is slow), 10 s health check (via `txtify doctor`)
+- **Lazy load**: model loads on first `convert`; stays resident; BF16 on CUDA, float32 on CPU
+- **Local transformers path** (no API key): images + PDFs (rendered via pymupdf, 150 DPI, page by page); office/HTML → use `--mode fast`
+- **Backends**: `auto` detects `vllm` > `sglang` > `ollama` (`OLLAMA_HOST`) > local transformers. The `glm-ocr` SDK package only adds MaaS (cloud, needs `ZHIPU_API_KEY`) or self-hosted modes.
 - **Formats**: `pdf`, `png`/`jpg`/`tiff`, `html`, `docx`, `pptx`, `xlsx` (via GLM pipeline)
 
 ## Install
