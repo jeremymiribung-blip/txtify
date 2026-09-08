@@ -1,6 +1,6 @@
 [package]
 name = "txtify"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "Hybrid document-to-text converter - Fast (pure Rust) vs High-Quality (GLM-OCR sidecar)"
 license = "MIT OR Apache-2.0"

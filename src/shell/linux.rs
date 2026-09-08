@@ -170,6 +170,27 @@ Icon=text-plain
             "txt" => ("txt", "fast", "TXT"),
             _ => ("md", "fast", "Fast MD"),
         };
+        // High-Quality braucht auf CPU Minuten pro Seite: Skript kehrt sofort
+        // zurück, die Arbeit läuft entkoppelt im Hintergrund (nohup), Start-
+        // und Fertig-Meldung via Notification-Daemon (kein Terminal sichtbar).
+        let launch = if mode == "high_quality" {
+            r#"if [ "${1:-}" != "--txtify-bg" ]; then
+    txtify_notify "Txtify ({label})" "Gestartet – dauert auf CPU einige Minuten pro Seite."
+    mkdir -p "${HOME}/.cache"
+    nohup "$0" --txtify-bg "$@" >> "${HOME}/.cache/txtify-hq.log" 2>&1 &
+    exit 0
+fi
+shift
+run_all
+txtify_notify "Txtify ({label})" "Fertig – die Ausgabe liegt neben der Datei."
+"#
+            .replace("{label}", label)
+        } else {
+            r#"run_all
+txtify_notify "Txtify ({label})" "Fertig – die Ausgabe liegt neben der Datei."
+"#
+            .replace("{label}", label)
+        };
         format!(
             r#"#!/bin/bash
 # Txtify Nautilus script - {label}
@@ -190,6 +211,22 @@ handle_file() {{
     fi
 }}
 
+# Benachrichtigung ohne Terminal: gdbus direkt an den Notification-Daemon
+# (das notify-send-Binary ist auf manchen Systemen defekt), Fallback notify-send.
+txtify_notify() {{
+    local title="$1"
+    local body="$2"
+    if command -v gdbus >/dev/null 2>&1; then
+        gdbus call --session --dest org.freedesktop.Notifications \
+            --object-path /org/freedesktop/Notifications \
+            --method org.freedesktop.Notifications.Notify \
+            "Txtify" 0 "" "$title" "$body" '[]' '{{}}' 5000 >/dev/null 2>&1 || true
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send "$title" "$body" || true
+    fi
+}}
+
+run_all() {{
 if [ -n "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" ]; then
     echo "$NAUTILUS_SCRIPT_SELECTED_FILE_PATHS" | while IFS= read -r file; do
         [ -z "$file" ] && continue
@@ -210,11 +247,9 @@ else
     # If no selection, try current directory
     handle_file "$(pwd)"
 fi
+}}
 
-if command -v notify-send >/dev/null 2>&1; then
-    notify-send "Txtify ({label})" "Fertig – die Ausgabe liegt neben der Datei." || true
-fi
-"#
+{launch}"#,
         )
     }
 }
@@ -333,8 +368,13 @@ mod tests {
         let c = li.nautilus_script_content("fast_md");
         assert!(c.contains(r#""/opt/txtify" convert"#) || c.contains(r#"EXE="/opt/txtify""#));
         assert!(c.contains("--to md --mode fast"));
+        // Output must go to a file next to the input (stdout is lost without terminal)
+        assert!(c.contains("-o \"${file%.*}.md\""));
         let hq = li.nautilus_script_content("high_quality");
         assert!(hq.contains("--mode high-quality"));
+        // HQ runs detached (CPU inference takes minutes) with notifications
+        assert!(hq.contains("--txtify-bg"));
+        assert!(hq.contains("txtify_notify"));
     }
 
     #[test]
