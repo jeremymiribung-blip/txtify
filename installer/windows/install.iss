@@ -5,7 +5,7 @@
 #define MyAppName "Txtify"
 #define MyAppVersion "0.1.0"
 #define MyAppPublisher "Txtify Contributors"
-#define MyAppURL "https://github.com/example/txtify"
+#define MyAppURL "https://github.com/jeremymiribung-blip/txtify"
 #define MyAppExeName "txtify.exe"
 
 [Setup]

@@ -7,40 +7,61 @@ Fast 42ms vs GLM 1.86 pg/s.
 
 ## Install
 
-### Quick install (Linux/macOS) — curl
+### Quick install (Linux/macOS) — curl (lädt alles inkl. KI automatisch)
 
 ```bash
 # Inspect first, then pipe to sh (recommended)
-curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh -o install.sh
+curl -fsSL https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.sh -o install.sh
 less install.sh
 sh install.sh
 
-# One-liner (after inspection)
-curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh | sh
+# One-liner (after inspection) — lädt Binary + Python-Deps + KI-Modell (~1GB) + Config
+curl -fsSL https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.sh | sh
+
+# Nur Fast-Modus ohne KI-Download (schnell, kein ~1GB Download)
+curl -fsSL https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.sh | sh -s -- --no-model
+
+# Mit Rechtsklick-Menü
+curl -fsSL https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.sh | sh -s -- --with-shell
 
 # Specific version or prefix
-curl -fsSL https://raw.githubusercontent.com/example/txtify/main/installer/install.sh | sh -s -- --version v0.1.0 --prefix ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.sh | sh -s -- --version v0.1.0 --prefix ~/.local/bin
 TXTIFY_VERSION=v0.1.0 sh installer/install.sh
+TXTIFY_NO_MODEL=1 sh installer/install.sh   # dto. per Env, ohne KI-Modell
 ```
 
-The script detects `x86_64/aarch64` + `linux/musl` or `apple-darwin`, downloads `txtify-<target>.tar.gz` from `releases/latest/download`, verifies `sha256` if present, installs to `~/.local/bin` (or `/usr/local/bin` fallback), and adds to `PATH` via `~/.bashrc`/`~/.zshrc`. See `sh installer/install.sh --help`.
+Der Installer erkennt `x86_64/aarch64` + `linux/musl` oder `apple-darwin`, lädt `txtify-<target>.tar.gz` von `releases/latest/download`, verifiziert `sha256`, installiert nach `~/.local/bin` (oder `/usr/local/bin`-Fallback), trägt `PATH` in `~/.bashrc`/`~/.zshrc` ein und führt danach automatisch `txtify setup --yes` aus: Python >= 3.10 prüfen, `pip install -r sidecar/requirements.txt`, KI-Modell `zai-org/GLM-OCR` (~1 GB) von Hugging Face prefetchen (Cache `~/.cache/huggingface/hub`), Default-Config anlegen. Mit `--no-setup` nur das Binary installieren (für CI/Docker), später mit `txtify setup --yes` nachholen. Siehe `sh installer/install.sh --help`.
 
-### Quick install (Windows) — PowerShell
+### Quick install (Windows) — PowerShell (lädt alles inkl. KI automatisch)
 
 ```powershell
 # Inspect first
-Invoke-WebRequest -Uri https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 -OutFile install.ps1
+Invoke-WebRequest -Uri https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 -OutFile install.ps1
 Get-Content install.ps1 | More
 .\install.ps1
 
-# One-liner (after inspection)
-irm https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 | iex
+# One-liner (after inspection) — lädt alles inkl. KI-Modell (~1GB)
+irm https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 | iex
 
-# Options
+# Optionen
 .\install.ps1 -Version v0.1.0 -Prefix "$env:LOCALAPPDATA\txtify" -Force
+.\install.ps1 -NoModel        # nur Fast-Modus, ohne ~1GB Download
+.\install.ps1 -WithShell      # auch Rechtsklick-Menü
+.\install.ps1 -NoSetup        # nur Binary, Setup später: txtify setup --yes
 ```
 
-Installs `txtify.exe` to `%LOCALAPPDATA%\txtify` (or custom `-Prefix`), verifies `sha256`, adds to HKCU `PATH` (no admin), then run `txtify doctor` and `txtify shell install` for context menu.
+Installiert `txtify.exe` nach `%LOCALAPPDATA%\txtify` (oder `-Prefix`), verifiziert `sha256`, trägt HKCU-`PATH` ein (kein Admin) und führt `txtify setup --yes` aus (Python-Deps + GLM-OCR-Modell + Config). Danach `txtify doctor` zur Kontrolle, `txtify shell install` falls nicht schon via `-WithShell` geschehen.
+
+### `txtify setup` — alle Ressourcen nachladen (auch manuell)
+
+```bash
+txtify setup --yes                  # alles: Python-Deps + KI-Modell (~1GB) + Config
+txtify setup --yes --no-model       # ohne Modell (nur Fast-Modus)
+txtify setup --yes --with-shell     # inkl. Rechtsklick-Menü
+txtify setup --check                # nur prüfen, nichts ändern
+txtify setup --model zai-org/GLM-OCR --python /usr/bin/python3
+txtify doctor                       # danach Systemcheck
+```
 
 ### From crates.io (once published)
 
@@ -52,7 +73,7 @@ txtify --help
 ### From source
 
 ```bash
-git clone https://github.com/example/txtify
+git clone https://github.com/jeremymiribung-blip/txtify
 cd txtify
 cargo build --release
 # binary <15MB without sidecar

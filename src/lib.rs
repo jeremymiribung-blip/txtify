@@ -31,6 +31,8 @@ pub mod config;
 pub mod converters;
 /// core — mod for txtify.
 pub mod core;
+/// setup — mod for txtify.
+pub mod setup;
 /// shell — mod for txtify.
 pub mod shell;
 

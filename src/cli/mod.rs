@@ -177,6 +177,41 @@ pub enum Commands {
     /// Check system dependencies and sidecar health
     Doctor,
 
+    /// Download all resources (Python deps, AI model ~1GB, config) — used by curl installer
+    Setup {
+        /// HuggingFace model ID to prefetch (default: zai-org/GLM-OCR)
+        #[arg(long)]
+        model: Option<String>,
+
+        /// GLM backend for config (auto|transformers|vllm|sglang|ollama)
+        #[arg(long)]
+        backend: Option<String>,
+
+        /// Python executable (default: auto-detect)
+        #[arg(long)]
+        python: Option<String>,
+
+        /// Skip AI model download (~1GB)
+        #[arg(long)]
+        no_model: bool,
+
+        /// Skip `pip install` of Python dependencies
+        #[arg(long)]
+        no_python_deps: bool,
+
+        /// Also install shell integration (context menu)
+        #[arg(long)]
+        with_shell: bool,
+
+        /// Non-interactive (no prompts)
+        #[arg(long)]
+        yes: bool,
+
+        /// Only check, change nothing
+        #[arg(long)]
+        check: bool,
+    },
+
     /// Show config and paths
     Config,
 

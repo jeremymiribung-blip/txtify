@@ -72,6 +72,28 @@ impl App {
                 .await
             }
             Some(Commands::Doctor) => self.run_doctor().await,
+            Some(Commands::Setup {
+                model,
+                backend,
+                python,
+                no_model,
+                no_python_deps,
+                with_shell,
+                yes,
+                check,
+            }) => {
+                let opts = crate::setup::SetupOptions {
+                    model,
+                    backend,
+                    python,
+                    no_model,
+                    no_python_deps,
+                    with_shell,
+                    yes,
+                    check_only: check,
+                };
+                crate::setup::run_setup(&self.config, &opts).await
+            }
             Some(Commands::Config) => self.run_config().await,
             Some(Commands::Version) => {
                 println!("txtify {}", env!("CARGO_PKG_VERSION"));

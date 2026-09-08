@@ -1,7 +1,7 @@
 # txtify installer - PowerShell for Windows
 # Usage:
-#   irm https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 | iex
-#   Invoke-WebRequest -Uri https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 -OutFile install.ps1; .\install.ps1 -Version v0.1.0 -Prefix "$env:LOCALAPPDATA\txtify"
+#   irm https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 | iex
+#   Invoke-WebRequest -Uri https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 -OutFile install.ps1; .\install.ps1 -Version v0.1.0 -Prefix "$env:LOCALAPPDATA\txtify"
 # Security: always inspect script before piping to iex (Get-Content install.ps1 | More)
 #
 # Parameters:
@@ -14,36 +14,51 @@
 param(
     [string]$Version = "latest",
     [string]$Prefix = "",
+    [string]$Model = "zai-org/GLM-OCR",
     [switch]$NoModifyPath,
     [switch]$Force,
+    [switch]$NoSetup,
+    [switch]$NoModel,
+    [switch]$WithShell,
     [switch]$Help
 )
 
 $ErrorActionPreference = "Stop"
-$Repo = if ($env:TXTIFY_REPO) { $env:TXTIFY_REPO } else { "example/txtify" }
+$Repo = if ($env:TXTIFY_REPO) { $env:TXTIFY_REPO } else { "jeremymiribung-blip/txtify" }
 if ($env:TXTIFY_VERSION -and $Version -eq "latest") { $Version = $env:TXTIFY_VERSION }
 if ($env:TXTIFY_PREFIX -and $Prefix -eq "") { $Prefix = $env:TXTIFY_PREFIX }
+if ($env:TXTIFY_MODEL -and $Model -eq "zai-org/GLM-OCR") { $Model = $env:TXTIFY_MODEL }
+if ($env:TXTIFY_NO_MODEL -and (-not $NoModel)) { $NoModel = $true }
+if ($env:TXTIFY_WITH_SHELL -and (-not $WithShell)) { $WithShell = $true }
+if ($env:TXTIFY_SETUP -eq "0") { $NoSetup = $true }
 
 if ($Help) {
     @"
-txtify installer (Windows PowerShell)
+txtify installer (Windows PowerShell) — inkl. Auto-Setup (KI-Modell, Python-Deps, Config)
 
-Usage: .\install.ps1 [-Version <v0.1.0>] [-Prefix <dir>] [-NoModifyPath] [-Force]
+Usage: .\install.ps1 [-Version <v0.1.0>] [-Prefix <dir>] [-NoModifyPath] [-Force] [-NoSetup] [-NoModel] [-WithShell] [-Model <id>]
+
+One-liner (empfohlen, lädt alles inkl. KI-Modell ~1GB):
+  irm https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 | iex
 
 Parameters:
   -Version      Version to install (default: latest, e.g. v0.1.0)
   -Prefix       Install directory (default: `$env:LOCALAPPDATA\txtify)
+  -Model        HF-Modell-ID (default: zai-org/GLM-OCR, ~1GB)
   -NoModifyPath Do not modify PATH
   -Force        Overwrite existing binary
+  -NoSetup      Nur Binary installieren, kein Setup/Modell-Download (für CI)
+  -NoModel      KI-Modell NICHT laden (nur Fast-Modus)
+  -WithShell    Auch Rechtsklick-Menü installieren
   -Help         Show this help
 
 Environment:
-  TXTIFY_VERSION, TXTIFY_REPO, TXTIFY_PREFIX
+  TXTIFY_VERSION, TXTIFY_REPO, TXTIFY_PREFIX, TXTIFY_MODEL, TXTIFY_NO_MODEL=1, TXTIFY_WITH_SHELL=1, TXTIFY_SETUP=0
 
 Examples:
-  irm https://raw.githubusercontent.com/example/txtify/main/installer/install.ps1 | iex
-  .\install.ps1 -Version v0.1.0
-  .\install.ps1 -Prefix "`$env:USERPROFILE\bin"
+  irm https://raw.githubusercontent.com/jeremymiribung-blip/txtify/main/installer/install.ps1 | iex
+  .\install.ps1 -Version v0.1.0 -NoModel
+  .\install.ps1 -Prefix "`$env:USERPROFILE\bin" -WithShell
 
 Security:
   Inspect before piping: Get-Content install.ps1 | More
@@ -177,7 +192,31 @@ if (-not $NoModifyPath) {
 # Cleanup
 Remove-Item -Recurse -Force $TmpDir -ErrorAction SilentlyContinue
 
+# Auto-Setup: Python-Deps + KI-Modell (~1GB) + Config
+if (-not $NoSetup) {
+    Write-Host "" -ForegroundColor Cyan
+    Write-Host "Running auto-setup (Python-Deps + KI-Modell + Config)..." -ForegroundColor Cyan
+    $SetupArgs = @("setup", "--yes")
+    if ($NoModel) {
+        $SetupArgs += "--no-model"
+    } else {
+        $SetupArgs += @("--model", $Model)
+    }
+    if ($WithShell) { $SetupArgs += "--with-shell" }
+    try {
+        & $BinPath @SetupArgs
+        Write-Host "Auto-setup erfolgreich." -ForegroundColor Green
+    } catch {
+        Write-Warning "WARN: 'txtify setup' meldete Fehler — Binary funktioniert trotzdem im Fast-Modus."
+        Write-Warning "Manuell erneut versuchen: txtify setup --yes"
+        Write-Warning "Details: txtify doctor"
+    }
+} else {
+    Write-Host "Setup übersprungen (-NoSetup). Später nachholen: txtify setup --yes  # lädt Python-Deps + KI-Modell (~1GB)" -ForegroundColor Yellow
+}
+
 Write-Host ""
 Write-Host "Run 'txtify --help' and 'txtify doctor' to verify." -ForegroundColor Cyan
+Write-Host "Fast-Modus geht sofort; High-Quality nutzt das geladene GLM-OCR-Modell." -ForegroundColor Cyan
 Write-Host "To add shell integration: txtify shell install" -ForegroundColor Cyan
 Write-Host "To uninstall: txtify shell uninstall; Remove-Item -Recurse -Force `"$Prefix`""
